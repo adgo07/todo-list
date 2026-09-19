@@ -9,6 +9,7 @@ const state = {
 const elements = {
   form: document.querySelector("#todo-form"),
   input: document.querySelector("#todo-input"),
+  dueDateInput: document.querySelector("#due-date-input"),
   list: document.querySelector("#task-list"),
   template: document.querySelector("#task-template"),
   filterButtons: [...document.querySelectorAll(".filter-button")],
@@ -64,6 +65,7 @@ function handleAddTask(event) {
   state.tasks.unshift({
     id: createId(),
     title,
+    dueDate: normalizeDueDate(elements.dueDateInput.value),
     completed: false,
     createdAt: new Date().toISOString(),
   });
@@ -97,28 +99,64 @@ function clearCompletedTasks() {
   render();
 }
 
-function startEditing(task, item, textElement) {
-  if (item.querySelector(".task-edit-input")) return;
+function startEditing(task, item) {
+  if (item.querySelector(".task-edit-fields")) return;
 
-  const input = document.createElement("input");
-  input.className = "task-edit-input";
-  input.type = "text";
-  input.maxLength = 120;
-  input.value = task.title;
-  input.setAttribute("aria-label", "编辑任务内容");
+  const content = item.querySelector(".task-content");
+  const fields = document.createElement("div");
+  fields.className = "task-edit-fields";
 
-  textElement.replaceWith(input);
-  input.focus();
-  input.select();
+  const titleInput = document.createElement("input");
+  titleInput.className = "task-edit-input";
+  titleInput.type = "text";
+  titleInput.maxLength = 120;
+  titleInput.value = task.title;
+  titleInput.setAttribute("aria-label", "编辑任务内容");
 
-  const finishEditing = (shouldSave = true) => {
-    if (!input.isConnected) return;
+  const dueInput = document.createElement("input");
+  dueInput.className = "task-edit-date";
+  dueInput.type = "date";
+  dueInput.value = task.dueDate || "";
+  dueInput.setAttribute("aria-label", "编辑截止日期");
 
-    const nextTitle = normalizeTitle(input.value);
+  const buttons = document.createElement("div");
+  buttons.className = "task-edit-buttons";
 
-    if (shouldSave && nextTitle) {
+  const saveButton = document.createElement("button");
+  saveButton.className = "edit-save-button";
+  saveButton.type = "button";
+  saveButton.textContent = "保存";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "edit-cancel-button";
+  cancelButton.type = "button";
+  cancelButton.textContent = "取消";
+
+  buttons.append(saveButton, cancelButton);
+  fields.append(titleInput, dueInput, buttons);
+  content.replaceChildren(fields);
+
+  titleInput.focus();
+  titleInput.select();
+
+  const finishEditing = (shouldSave) => {
+    if (!fields.isConnected) return;
+
+    if (shouldSave) {
+      const nextTitle = normalizeTitle(titleInput.value);
+      if (!nextTitle) {
+        titleInput.focus();
+        return;
+      }
+
       state.tasks = state.tasks.map((candidate) =>
-        candidate.id === task.id ? { ...candidate, title: nextTitle } : candidate
+        candidate.id === task.id
+          ? {
+              ...candidate,
+              title: nextTitle,
+              dueDate: normalizeDueDate(dueInput.value),
+            }
+          : candidate
       );
       saveTasks();
     }
@@ -126,18 +164,20 @@ function startEditing(task, item, textElement) {
     render();
   };
 
-  input.addEventListener("keydown", (event) => {
+  saveButton.addEventListener("click", () => finishEditing(true));
+  cancelButton.addEventListener("click", () => finishEditing(false));
+
+  fields.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      finishEditing(false);
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       finishEditing(true);
     }
-
-    if (event.key === "Escape") {
-      finishEditing(false);
-    }
   });
-
-  input.addEventListener("blur", () => finishEditing(true), { once: true });
 }
 
 function render() {
@@ -156,6 +196,10 @@ function render() {
     item.dataset.id = task.id;
     item.classList.toggle("is-completed", task.completed);
 
+    const dueStatus = getDueStatus(task);
+    item.classList.toggle("is-overdue", dueStatus === "overdue");
+    item.classList.toggle("is-due-today", dueStatus === "today");
+
     checkbox.checked = task.completed;
     checkbox.setAttribute(
       "aria-label",
@@ -163,12 +207,12 @@ function render() {
     );
 
     taskText.textContent = task.title;
-    taskMeta.textContent = formatCreatedAt(task.createdAt);
+    renderTaskMeta(task, taskMeta);
 
     checkbox.addEventListener("change", () => toggleTask(task.id));
     deleteButton.addEventListener("click", () => deleteTask(task.id));
-    editButton.addEventListener("click", () => startEditing(task, item, taskText));
-    taskText.addEventListener("dblclick", () => startEditing(task, item, taskText));
+    editButton.addEventListener("click", () => startEditing(task, item));
+    taskText.addEventListener("dblclick", () => startEditing(task, item));
 
     elements.list.appendChild(item);
   });
@@ -228,16 +272,67 @@ function loadTasks() {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
     if (!Array.isArray(stored)) return [];
 
-    return stored.filter(
-      (task) =>
-        task &&
-        typeof task.id === "string" &&
-        typeof task.title === "string" &&
-        typeof task.completed === "boolean"
-    );
+    return stored
+      .filter(
+        (task) =>
+          task &&
+          typeof task.id === "string" &&
+          typeof task.title === "string" &&
+          typeof task.completed === "boolean"
+      )
+      .map((task) => ({
+        ...task,
+        dueDate: normalizeDueDate(task.dueDate),
+      }));
   } catch {
     return [];
   }
+}
+
+function renderTaskMeta(task, taskMeta) {
+  const created = document.createElement("span");
+  created.textContent = formatCreatedAt(task.createdAt);
+  taskMeta.replaceChildren(created);
+
+  if (!task.dueDate) return;
+
+  const due = document.createElement("span");
+  due.className = "due-date";
+  due.textContent = formatDueDate(task.dueDate, getDueStatus(task));
+  taskMeta.appendChild(due);
+}
+
+function getDueStatus(task) {
+  if (!task.dueDate) return "none";
+  if (task.completed) return "completed";
+
+  const today = getTodayKey();
+
+  if (task.dueDate < today) return "overdue";
+  if (task.dueDate === today) return "today";
+  return "upcoming";
+}
+
+function formatDueDate(value, status) {
+  const parts = value.split("-");
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+
+  if (status === "today") return "今天截止";
+  if (status === "overdue") return `已逾期 · ${month}月${day}日`;
+  return `${month}月${day}日截止`;
+}
+
+function getTodayKey() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function normalizeDueDate(value) {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
 }
 
 function saveTasks() {
