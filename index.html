@@ -35,9 +35,13 @@
             required
           />
         </div>
+        <label class="date-field" for="due-date-input">
+          <span class="date-field-label">截止日期</span>
+          <input id="due-date-input" name="dueDate" type="date" aria-label="截止日期（可选）" />
+        </label>
         <button class="primary-button" type="submit">添加任务</button>
       </form>
-      <p class="input-hint" id="input-hint">按 Enter 快速添加，最多 120 个字符。</p>
+      <p class="input-hint" id="input-hint">截止日期可选；按 Enter 快速添加，最多 120 个字符。</p>
 
       <section class="stats" aria-label="任务统计">
         <article class="stat-card">
